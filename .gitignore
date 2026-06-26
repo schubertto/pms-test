@@ -1,0 +1,24 @@
+# 가상 환경 (Virtual Environment)
+.venv/
+venv/
+ENV/
+env/
+
+# 환경 변수 및 민감 정보 (Database Credentials & Secrets)
+.env
+.env.local
+.env.*
+
+# 파이썬 캐시 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 운영체제 임시 파일
+.DS_Store
+Thumbs.db
+
+# AI 에이전트 및 IDE 생성 파일
+.system_generated/
+scratch/
