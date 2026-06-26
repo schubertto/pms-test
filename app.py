@@ -783,7 +783,7 @@ with tab_members:
 with tab_crud:
     st.subheader("⚙️ 작업 등록 / 수정 / 삭제 관리 패널")
     
-    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)"], horizontal=True)
+    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)", "프로젝트 수정/삭제 (⚙️)"], horizontal=True)
     st.markdown("---")
     
     # DB 최신 옵션 목록
@@ -1035,3 +1035,103 @@ with tab_crud:
                     if success:
                         st.success(f"새 스프린트 '{c_sprint_name}'이 성공적으로 추가되었습니다!")
                         st.rerun()
+
+    # 4.5 프로젝트 수정/삭제 폼
+    elif crud_mode == "프로젝트 수정/삭제 (⚙️)":
+        st.markdown("#### ⚙️ 프로젝트 정보 수정 및 영구 삭제")
+        
+        if not projects_df.empty:
+            # 대상 프로젝트 선택 (기본적으로 현재 활성화된 프로젝트 선택)
+            proj_sel_opts = {row['name']: row['id'] for idx, row in projects_df.iterrows()}
+            default_idx = list(proj_sel_opts.keys()).index(selected_project_name) if selected_project_name in proj_sel_opts else 0
+            
+            selected_manage_proj_name = st.selectbox("관리할 프로젝트 선택", list(proj_sel_opts.keys()), index=default_idx)
+            selected_manage_proj_id = proj_sel_opts[selected_manage_proj_name]
+            
+            # 선택된 프로젝트 상세 정보 조회
+            proj_data = projects_df[projects_df['id'] == selected_manage_proj_id].iloc[0]
+            
+            # 수정 / 삭제 라디오 버튼
+            manage_action = st.radio("수행할 관리를 선택하세요", ["정보 수정 ✏️", "프로젝트 삭제 🗑️"], horizontal=True)
+            st.markdown("---")
+            
+            if manage_action == "정보 수정 ✏️":
+                # 날짜 안전 변환
+                p_start_val = proj_data['start_date']
+                p_end_val = proj_data['end_date']
+                if isinstance(p_start_val, str):
+                    p_start_val = datetime.datetime.strptime(p_start_val, "%Y-%m-%d").date()
+                if isinstance(p_end_val, str):
+                    p_end_val = datetime.datetime.strptime(p_end_val, "%Y-%m-%d").date()
+                    
+                with st.form("edit_project_form"):
+                    u_proj_name = st.text_input("프로젝트명", value=proj_data['name'])
+                    u_proj_client = st.text_input("발주처", value=proj_data['client'] or "")
+                    u_proj_desc = st.text_area("프로젝트 상세 설명", value=proj_data['description'] or "")
+                    
+                    col_pua, col_pub = st.columns(2)
+                    with col_pua:
+                        u_proj_start = st.date_input("프로젝트 시작일", value=p_start_val)
+                    with col_pub:
+                        u_proj_end = st.date_input("프로젝트 종료일", value=p_end_val)
+                        
+                    project_update_btn = st.form_submit_button("프로젝트 정보 수정 완료 ✏️")
+                    
+                    if project_update_btn:
+                        # 입구에서 검사 (Early Return) - 필수값 확인
+                        if not u_proj_name.strip():
+                            st.error("오류: 프로젝트명은 비워둘 수 없습니다.")
+                        elif u_proj_start > u_proj_end:
+                            st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
+                        else:
+                            # [확인용 출력] 프로젝트 정보 수정 로그
+                            print(f"[프로젝트 수정] 프로젝트 ID {selected_manage_proj_id} 의 정보 수정을 시도합니다.")
+                            
+                            success = db_execute("""
+                                UPDATE pms_projects
+                                SET name = %s, client = %s, description = %s, start_date = %s, end_date = %s
+                                WHERE id = %s;
+                            """, (u_proj_name, u_proj_client, u_proj_desc, u_proj_start, u_proj_end, int(selected_manage_proj_id)))
+                            
+                            if success:
+                                st.success(f"프로젝트 '{u_proj_name}'의 정보가 성공적으로 수정되었습니다!")
+                                st.rerun()
+                                
+            elif manage_action == "프로젝트 삭제 🗑️":
+                st.warning("⚠️ **경고: 프로젝트 삭제 시 관련된 모든 스프린트와 작업(WBS)이 연쇄적으로 영구 삭제되며 복구할 수 없습니다!**")
+                
+                # 해당 프로젝트의 스프린트 및 작업 개수 파악하여 경고
+                proj_sprints = db_query("SELECT id FROM pms_sprints WHERE project_id = %s;", (int(selected_manage_proj_id),))
+                sprint_count = len(proj_sprints)
+                
+                task_count = 0
+                if sprint_count > 0:
+                    sprint_ids = proj_sprints['id'].tolist()
+                    proj_tasks = db_query(f"SELECT id FROM pms_tasks WHERE sprint_id IN ({','.join(['%s']*len(sprint_ids))});", tuple(sprint_ids))
+                    task_count = len(proj_tasks)
+                    
+                st.info(f"지정된 프로젝트 내 삭제 예정 데이터: **스프린트 {sprint_count}개 / WBS 작업 {task_count}개**")
+                
+                confirm_proj_del = st.checkbox("예, 본 프로젝트와 관련된 모든 하위 데이터를 완전히 지우는 데 동의합니다.")
+                
+                if st.button("프로젝트 영구 삭제 🗑️", type="primary"):
+                    # 입구에서 검사 (Early Return) - 동의 체크 확인
+                    if not confirm_proj_del:
+                        st.error("오류: 삭제 동의 확인 체크박스에 체크해 주셔야 삭제 진행이 가능합니다.")
+                    else:
+                        # [확인용 출력] 프로젝트 영구 삭제 시도 로그
+                        print(f"[프로젝트 삭제] 프로젝트 ID {selected_manage_proj_id} 및 하위 데이터 삭제를 진행합니다.")
+                        
+                        # 1. 하위 태스크 삭제
+                        if sprint_count > 0:
+                            sprint_ids = proj_sprints['id'].tolist()
+                            db_execute(f"DELETE FROM pms_tasks WHERE sprint_id IN ({','.join(['%s']*len(sprint_ids))});", tuple(sprint_ids))
+                        
+                        # 2. 프로젝트 삭제 (sprints는 ON DELETE CASCADE에 의해 연쇄 삭제됨)
+                        success = db_execute("DELETE FROM pms_projects WHERE id = %s;", (int(selected_manage_proj_id),))
+                        
+                        if success:
+                            st.success(f"프로젝트 '{selected_manage_proj_name}'가 성공적으로 영구 삭제되었습니다.")
+                            st.rerun()
+        else:
+            st.info("관리할 프로젝트 데이터가 존재하지 않습니다.")
