@@ -223,6 +223,43 @@ def check_dependency_allowed(task_id, new_status):
     
     return True, ""
 
+# ------------------------------------------
+# [신규 추가] 프로젝트 등록용 팝업 다이얼로그 (Streamlit 1.34.0+ 지원)
+# ------------------------------------------
+@st.dialog("📂 새로운 대형 프로젝트 등록")
+def show_add_project_dialog():
+    with st.form("dialog_add_project_form", clear_on_submit=True):
+        c_proj_name = st.text_input("프로젝트명 (필수)")
+        c_proj_client = st.text_input("발주처 (예: 네이버, 삼성 등)")
+        c_proj_desc = st.text_area("프로젝트 상세 설명")
+        
+        col_pa, col_pb = st.columns(2)
+        with col_pa:
+            c_proj_start = st.date_input("프로젝트 시작일", datetime.date.today())
+        with col_pb:
+            c_proj_end = st.date_input("프로젝트 종료일", datetime.date.today() + datetime.timedelta(days=60))
+            
+        project_submit_btn = st.form_submit_button("프로젝트 등록하기 🚀")
+        
+        if project_submit_btn:
+            # 입구에서 검사 (Early Return) - 필수값 확인
+            if not c_proj_name.strip():
+                st.error("오류: 프로젝트명을 입력해 주세요.")
+            elif c_proj_start > c_proj_end:
+                st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
+            else:
+                # [확인용 출력] 새 프로젝트 팝업 등록 로그
+                print(f"[프로젝트 추가 팝업] 신규 프로젝트 '{c_proj_name}' (발주처: {c_proj_client}, 기간: {c_proj_start} ~ {c_proj_end}) 등록을 시도합니다.")
+                
+                success = db_execute("""
+                    INSERT INTO pms_projects (name, start_date, end_date, client, description)
+                    VALUES (%s, %s, %s, %s, %s);
+                """, (c_proj_name, c_proj_start, c_proj_end, c_proj_client, c_proj_desc))
+                
+                if success:
+                    st.success(f"새 프로젝트 '{c_proj_name}'이 성공적으로 등록되었습니다!")
+                    st.rerun()
+
 # ==========================================
 # [사이드바 필터 및 관리자 설정]
 # ==========================================
@@ -244,7 +281,8 @@ if not projects_df.empty:
     selected_project_name = st.sidebar.selectbox(
         "프로젝트",
         projects_df['name'].tolist(),
-        key="selected_project_name"
+        key="selected_project_name",
+        label_visibility="collapsed" # 레이아웃을 더 깔끔하게 만들기 위해 기본 라벨 숨김
     )
     # 선택된 프로젝트 ID 및 정보 추출
     selected_project_row = projects_df[projects_df['name'] == selected_project_name].iloc[0]
@@ -253,6 +291,12 @@ else:
     selected_project_name = "등록된 프로젝트 없음"
     selected_project_id = None
     selected_project_row = None
+
+# [신규 추가] 프로젝트 추가 팝업 실행 버튼
+if st.sidebar.button("➕ 프로젝트 추가", use_container_width=True):
+    # [확인용 출력] 사용자 팝업 실행 확인 로그
+    print("[사이드바 클릭] 사용자가 프로젝트 추가 팝업을 호출하였습니다.")
+    show_add_project_dialog()
 
 st.sidebar.markdown(f"---")
 
@@ -739,7 +783,7 @@ with tab_members:
 with tab_crud:
     st.subheader("⚙️ 작업 등록 / 수정 / 삭제 관리 패널")
     
-    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)", "프로젝트 추가 (📂)"], horizontal=True)
+    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)"], horizontal=True)
     st.markdown("---")
     
     # DB 최신 옵션 목록
@@ -990,40 +1034,4 @@ with tab_crud:
                     
                     if success:
                         st.success(f"새 스프린트 '{c_sprint_name}'이 성공적으로 추가되었습니다!")
-                        st.rerun()
-
-    # 4.5 프로젝트 추가 폼
-    elif crud_mode == "프로젝트 추가 (📂)":
-        st.markdown("#### 📂 새로운 대형 프로젝트 등록")
-        
-        with st.form("add_project_form"):
-            c_proj_name = st.text_input("프로젝트명 (필수)")
-            c_proj_client = st.text_input("발주처 (예: 네이버, 삼성 등)")
-            c_proj_desc = st.text_area("프로젝트 상세 설명")
-            
-            col_pa, col_pb = st.columns(2)
-            with col_pa:
-                c_proj_start = st.date_input("프로젝트 시작일", datetime.date.today())
-            with col_pb:
-                c_proj_end = st.date_input("프로젝트 종료일", datetime.date.today() + datetime.timedelta(days=60))
-                
-            project_submit_btn = st.form_submit_button("프로젝트 등록하기 🚀")
-            
-            if project_submit_btn:
-                # 입구에서 검사 (Early Return)
-                if not c_proj_name.strip():
-                    st.error("오류: 프로젝트명을 입력해 주세요.")
-                elif c_proj_start > c_proj_end:
-                    st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
-                else:
-                    # [확인용 출력] 새 프로젝트 등록 로그
-                    print(f"[프로젝트 추가] 신규 프로젝트 '{c_proj_name}' (발주처: {c_proj_client}) 등록을 시도합니다.")
-                    
-                    success = db_execute("""
-                        INSERT INTO pms_projects (name, start_date, end_date, client, description)
-                        VALUES (%s, %s, %s, %s, %s);
-                    """, (c_proj_name, c_proj_start, c_proj_end, c_proj_client, c_proj_desc))
-                    
-                    if success:
-                        st.success(f"새 프로젝트 '{c_proj_name}'이 성공적으로 등록되었습니다!")
                         st.rerun()
