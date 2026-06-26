@@ -676,7 +676,7 @@ with tab_members:
 with tab_crud:
     st.subheader("⚙️ 작업 등록 / 수정 / 삭제 관리 패널")
     
-    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)"], horizontal=True)
+    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)"], horizontal=True)
     st.markdown("---")
     
     # DB 최신 옵션 목록
@@ -876,3 +876,45 @@ with tab_crud:
                         st.rerun()
         else:
             st.info("삭제할 작업 데이터가 존재하지 않습니다.")
+
+    # 4.4 스프린트 추가 폼
+    elif crud_mode == "스프린트 추가 (📅)":
+        st.markdown("#### 📅 새로운 애자일 스프린트 등록")
+        
+        with st.form("add_sprint_form"):
+            c_sprint_name = st.text_input("스프린트명 (필수, 예: 스프린트 8: 배포 및 운영)")
+            
+            col_sa, col_sb = st.columns(2)
+            with col_sa:
+                c_sprint_start = st.date_input("스프린트 시작일", datetime.date.today())
+            with col_sb:
+                c_sprint_end = st.date_input("스프린트 종료일", datetime.date.today() + datetime.timedelta(days=14))
+                
+            c_sprint_active = st.checkbox("이 스프린트를 현재 활성 스프린트로 설정", value=False)
+            
+            sprint_submit_btn = st.form_submit_button("스프린트 등록하기 🚀")
+            
+            if sprint_submit_btn:
+                # 입구에서 검사 (Early Return) - 필수 값 확인
+                if not c_sprint_name.strip():
+                    st.error("오류: 스프린트명을 입력해 주세요.")
+                elif c_sprint_start > c_sprint_end:
+                    st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
+                else:
+                    # 만약 현재 활성 스프린트로 지정한다면 기존의 모든 활성 표기를 FALSE 처리
+                    if c_sprint_active:
+                        # [확인용 출력] 기존 활성 스프린트 비활성화 처리 로그
+                        print("[스프린트 추가] 새 활성 스프린트 등록으로 인해 기존 활성 스프린트들을 비활성화 처리합니다.")
+                        db_execute("UPDATE pms_sprints SET is_active = FALSE;")
+                    
+                    # [확인용 출력] 신규 스프린트 등록 쿼리 실행 로그
+                    print(f"[스프린트 추가] 신규 스프린트 '{c_sprint_name}' ({c_sprint_start} ~ {c_sprint_end}) 등록을 시도합니다.")
+                    
+                    success = db_execute("""
+                        INSERT INTO pms_sprints (name, start_date, end_date, is_active)
+                        VALUES (%s, %s, %s, %s);
+                    """, (c_sprint_name, c_sprint_start, c_sprint_end, c_sprint_active))
+                    
+                    if success:
+                        st.success(f"새 스프린트 '{c_sprint_name}'이 성공적으로 추가되었습니다!")
+                        st.rerun()
