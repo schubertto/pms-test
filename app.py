@@ -19,15 +19,25 @@ from dotenv import load_dotenv
 warnings.filterwarnings('ignore')
 
 # 2. 입구에서 검사 (Early Return) - 환경 설정 검증
-env_path = '.env.local'
-if not os.path.exists(env_path):
-    st.error("`.env.local` 파일이 존재하지 않습니다. db_setup.py를 실행했는지 확인해주세요.")
-    st.stop()
-
-load_dotenv(dotenv_path=env_path)
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# 만약 환경 변수에 바로 존재하지 않는다면(로컬 개발용) .env.local 로드를 시도합니다.
 if not DATABASE_URL:
-    st.error("DATABASE_URL 환경 변수가 누락되었습니다. `.env.local` 파일을 점검해주세요.")
+    env_path = '.env.local'
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+        DATABASE_URL = os.getenv("DATABASE_URL")
+
+# [확인용 출력] 데이터베이스 연결 정보 확인 로그 출력 (보안을 위해 비밀번호 영역 가림)
+if DATABASE_URL:
+    safe_db_url = DATABASE_URL.split('@')[-1] if '@' in DATABASE_URL else "DATABASE_URL"
+    print(f"[환경 설정] 데이터베이스 접속 준비 완료. (Host/DB: {safe_db_url})")
+else:
+    print("[환경 설정] 경고: 데이터베이스 연결 설정(DATABASE_URL)이 감지되지 않았습니다.")
+
+# 최종적으로 DATABASE_URL이 없을 경우에만 중단 처리합니다.
+if not DATABASE_URL:
+    st.error("데이터베이스 연결 설정(DATABASE_URL)이 누락되었습니다. 로컬 개발 환경인 경우 `.env.local` 파일을 생성해주시고, Streamlit Cloud에 배포한 경우 App Settings -> Secrets에 DATABASE_URL을 추가해주세요.")
     st.stop()
 
 # ==========================================
