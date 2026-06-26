@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 팀 프로젝트 진행상황 관리 시스템(PMS) - Neon DB 초기 테이블 설정 및 더미 데이터 주입 스크립트
+다중 프로젝트 스키마 추가 버전
 작성자: Antigravity AI
 """
 
 import os
 import psycopg2
+import datetime
 from dotenv import load_dotenv
 
 # 1. 입구에서 검사 (Early Return) - 환경 변수 로드 상태 확인
-# env.local 파일이 있는지 확인하고 로드합니다.
 env_path = '.env.local'
 if not os.path.exists(env_path):
     print(f"[오류] {env_path} 파일이 존재하지 않습니다. 환경 변수 설정을 먼저 해주세요.")
@@ -36,10 +37,24 @@ try:
     cursor.execute("DROP TABLE IF EXISTS pms_tasks CASCADE;")
     cursor.execute("DROP TABLE IF EXISTS pms_sprints CASCADE;")
     cursor.execute("DROP TABLE IF EXISTS pms_members CASCADE;")
+    cursor.execute("DROP TABLE IF EXISTS pms_projects CASCADE;")
     print("[성공] 기존 테이블 제거 완료.")
 
     # 4. 테이블 생성
-    # 4.1. 팀원 테이블 (pms_members)
+    # 4.1. 프로젝트 테이블 (pms_projects)
+    print("[작업] pms_projects 테이블을 생성합니다...")
+    cursor.execute("""
+        CREATE TABLE pms_projects (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            client VARCHAR(255),
+            description TEXT
+        );
+    """)
+
+    # 4.2. 팀원 테이블 (pms_members)
     print("[작업] pms_members 테이블을 생성합니다...")
     cursor.execute("""
         CREATE TABLE pms_members (
@@ -51,7 +66,7 @@ try:
         );
     """)
     
-    # 4.2. 스프린트 테이블 (pms_sprints)
+    # 4.3. 스프린트 테이블 (pms_sprints)
     print("[작업] pms_sprints 테이블을 생성합니다...")
     cursor.execute("""
         CREATE TABLE pms_sprints (
@@ -59,11 +74,12 @@ try:
             name VARCHAR(100) NOT NULL,
             start_date DATE NOT NULL,
             end_date DATE NOT NULL,
-            is_active BOOLEAN DEFAULT FALSE
+            is_active BOOLEAN DEFAULT FALSE,
+            project_id INTEGER REFERENCES pms_projects(id) ON DELETE CASCADE
         );
     """)
 
-    # 4.3. 작업 테이블 (pms_tasks)
+    # 4.4. 작업 테이블 (pms_tasks)
     print("[작업] pms_tasks 테이블을 생성합니다...")
     cursor.execute("""
         CREATE TABLE pms_tasks (
@@ -85,7 +101,17 @@ try:
     print("[성공] 모든 테이블 생성 완료.")
 
     # 5. 초기 데이터 주입 (Insert)
-    # 5.1. 팀원 데이터 주입
+    
+    # 5.1. 프로젝트 초기 데이터 주입
+    print("[작업] 프로젝트(pms_projects) 초기 데이터를 등록합니다...")
+    cursor.execute("""
+        INSERT INTO pms_projects (name, start_date, end_date, client, description)
+        VALUES (%s, %s, %s, %s, %s) RETURNING id;
+    """, ("팀 프로젝트 관리 시스템(PMS) 구축", "2026-06-01", "2026-07-31", "Antigravity Corp", "대시보드 및 WBS 갠트차트 개발 프로젝트"))
+    project_id = cursor.fetchone()[0]
+    print(f"[성공] 기본 프로젝트 등록 완료. (ID: {project_id})")
+
+    # 5.2. 팀원 데이터 주입
     print("[작업] 팀원(pms_members) 초기 데이터를 등록합니다...")
     members = [
         ("팀원1", "기획자 & 테스터", "2026-06-01", "2026-08-31"),
@@ -101,25 +127,25 @@ try:
         """, m)
     print("[성공] 팀원 데이터 등록 완료.")
 
-    # 5.2. 스프린트 데이터 주입 (요청에 따라 1~7단계로 재구성)
+    # 5.3. 스프린트 데이터 주입 (요청에 따라 1~7단계로 재구성 및 프로젝트 연결)
     print("[작업] 스프린트(pms_sprints) 초기 데이터를 등록합니다...")
     sprints = [
-        ("스프린트 1: 프로젝트관리", "2026-06-01", "2026-06-07", False),
-        ("스프린트 2: 기획 및 화면설계", "2026-06-08", "2026-06-15", False),
-        ("스프린트 3: UI 디자인", "2026-06-16", "2026-06-22", False),
-        ("스프린트 4: 프론트개발", "2026-06-23", "2026-07-07", True), # 오늘(6/26) 속한 스프린트 활성화
-        ("스프린트 5: 백엔드개발", "2026-06-23", "2026-07-07", False),
-        ("스프린트 6: API개발 및 프론트연동", "2026-07-08", "2026-07-22", False),
-        ("스프린트 7: QA테스트", "2026-07-23", "2026-07-31", False)
+        ("스프린트 1: 프로젝트관리", "2026-06-01", "2026-06-07", False, project_id),
+        ("스프린트 2: 기획 및 화면설계", "2026-06-08", "2026-06-15", False, project_id),
+        ("스프린트 3: UI 디자인", "2026-06-16", "2026-06-22", False, project_id),
+        ("스프린트 4: 프론트개발", "2026-06-23", "2026-07-07", True, project_id), # 오늘(6/26) 속한 스프린트 활성화
+        ("스프린트 5: 백엔드개발", "2026-06-23", "2026-07-07", False, project_id),
+        ("스프린트 6: API개발 및 프론트연동", "2026-07-08", "2026-07-22", False, project_id),
+        ("스프린트 7: QA테스트", "2026-07-23", "2026-07-31", False, project_id)
     ]
     for s in sprints:
         cursor.execute("""
-            INSERT INTO pms_sprints (name, start_date, end_date, is_active) 
-            VALUES (%s, %s, %s, %s);
+            INSERT INTO pms_sprints (name, start_date, end_date, is_active, project_id) 
+            VALUES (%s, %s, %s, %s, %s);
         """, s)
     print("[성공] 스프린트 데이터 등록 완료.")
 
-    # 5.3. 작업 데이터 주입 (계층 구조 및 의존성을 위해 순차 등록)
+    # 5.4. 작업 데이터 주입 (계층 구조 및 의존성을 위해 순차 등록)
     print("[작업] 작업(pms_tasks) 초기 데이터를 등록합니다...")
     
     # 팀원 ID 매핑 정보 조회
@@ -127,7 +153,7 @@ try:
     member_map = {row[1]: row[0] for row in cursor.fetchall()}
     
     # 스프린트 ID 매핑 정보 조회
-    cursor.execute("SELECT id, name FROM pms_sprints;")
+    cursor.execute("SELECT id, name FROM pms_sprints WHERE project_id = %s;", (project_id,))
     sprint_map = {}
     for row in cursor.fetchall():
         if "스프린트 1" in row[1]:

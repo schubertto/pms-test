@@ -236,31 +236,67 @@ st.sidebar.button(theme_btn_text, on_click=toggle_theme, use_container_width=Tru
 st.sidebar.markdown(f"---")
 
 # DB 필터 데이터 수집
+projects_df = db_query("SELECT id, name, start_date, end_date, client, description FROM pms_projects ORDER BY id;")
+
+# 사이드바 프로젝트 선택 UI
+st.sidebar.markdown("### 📁 프로젝트 선택")
+if not projects_df.empty:
+    selected_project_name = st.sidebar.selectbox(
+        "프로젝트",
+        projects_df['name'].tolist(),
+        key="selected_project_name"
+    )
+    # 선택된 프로젝트 ID 및 정보 추출
+    selected_project_row = projects_df[projects_df['name'] == selected_project_name].iloc[0]
+    selected_project_id = selected_project_row['id']
+else:
+    selected_project_name = "등록된 프로젝트 없음"
+    selected_project_id = None
+    selected_project_row = None
+
+st.sidebar.markdown(f"---")
+
+# 선택된 프로젝트에 종속된 스프린트 수집
+if selected_project_id is not None:
+    sprints_df = db_query("SELECT id, name, is_active FROM pms_sprints WHERE project_id = %s ORDER BY id;", (int(selected_project_id),))
+else:
+    sprints_df = pd.DataFrame(columns=['id', 'name', 'is_active'])
+
 members_df = db_query("SELECT id, name, role FROM pms_members ORDER BY id;")
-sprints_df = db_query("SELECT id, name, is_active FROM pms_sprints ORDER BY id;")
 
 # 사이드바 필터링 UI
 st.sidebar.markdown("### 🔍 데이터 필터링")
+sprint_opts_list = ["전체 스프린트"]
+if not sprints_df.empty:
+    sprint_opts_list += sprints_df['name'].tolist()
+
 selected_sprint_name = st.sidebar.selectbox(
     "스프린트 선택",
-    ["전체 스프린트"] + sprints_df['name'].tolist()
+    sprint_opts_list
 )
 
 selected_member_name = st.sidebar.selectbox(
     "담당 팀원 선택",
-    ["전체 팀원"] + members_df['name'].tolist()
+    ["전체 팀원"] + (members_df['name'].tolist() if not members_df.empty else [])
 )
 
 # 필터 조건에 따른 SQL Where 절 생성
 where_clauses = []
 query_params = []
 
-if selected_sprint_name != "전체 스프린트":
+# 프로젝트 필터 기본 바인딩 (선택 프로젝트가 없으면 조회되지 않도록 차단)
+if selected_project_id is not None:
+    where_clauses.append("s.project_id = %s")
+    query_params.append(int(selected_project_id))
+else:
+    where_clauses.append("1=0")
+
+if selected_sprint_name != "전체 스프린트" and not sprints_df.empty:
     sprint_id = sprints_df[sprints_df['name'] == selected_sprint_name].iloc[0]['id']
     where_clauses.append("t.sprint_id = %s")
     query_params.append(int(sprint_id))
 
-if selected_member_name != "전체 팀원":
+if selected_member_name != "전체 팀원" and not members_df.empty:
     member_id = members_df[members_df['name'] == selected_member_name].iloc[0]['id']
     where_clauses.append("t.assignee_id = %s")
     query_params.append(int(member_id))
@@ -291,6 +327,22 @@ tasks_df = db_query(tasks_query, query_params)
 
 st.markdown(f"# 🚢 팀 프로젝트 관제 대시보드")
 st.markdown("애자일 마일스톤 관리 및 WBS/갠트 차트 일정 통합 관리 시스템")
+
+# [수정] 프로젝트 정보 카드식 표시
+if selected_project_row is not None:
+    p_start_date = selected_project_row['start_date']
+    p_end_date = selected_project_row['end_date']
+    p_client = selected_project_row['client'] or "미등록"
+    p_desc = selected_project_row['description'] or "설명 없음"
+    
+    st.markdown(f"""
+    <div style="background-color: {CARD_BG}; border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+        <span style="font-size: 0.85rem; color: {TEXT_MUTED}; font-weight: 600;">🏢 발주처: {p_client}</span> | 
+        <span style="font-size: 0.85rem; color: {TEXT_MUTED}; font-weight: 600;">📅 전체 기간: {p_start_date} ~ {p_end_date}</span>
+        <div style="font-size: 0.9rem; color: {TEXT_COLOR}; margin-top: 0.5rem;">📝 {p_desc}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
 st.markdown("---")
 
 # 1. 상단 대시보드 지표 연산 및 렌더링
@@ -310,13 +362,24 @@ else:
     total_tasks = 0
 
 # 활성 스프린트 정보 가져오기
-active_sprint = sprints_df[sprints_df['is_active'] == True]
-active_sprint_text = active_sprint.iloc[0]['name'] if not active_sprint.empty else "활성화된 스프린트 없음"
+if selected_project_id is not None:
+    active_sprint = sprints_df[sprints_df['is_active'] == True]
+    active_sprint_text = active_sprint.iloc[0]['name'] if not active_sprint.empty else "활성화된 스프린트 없음"
+else:
+    active_sprint_text = "프로젝트 없음"
 
-# [수정] 프로젝트 타임라인 계산 로직 (시작일, 종료일 고정)
+# [수정] 프로젝트 타임라인 계산 로직 (선택된 프로젝트 정보 이용)
 today = datetime.date.today()
-project_start = datetime.date(today.year, 6, 1)
-project_end = datetime.date(today.year, 7, 31)
+if selected_project_row is not None:
+    project_start = selected_project_row['start_date']
+    project_end = selected_project_row['end_date']
+    if isinstance(project_start, str):
+        project_start = datetime.datetime.strptime(project_start, "%Y-%m-%d").date()
+    if isinstance(project_end, str):
+        project_end = datetime.datetime.strptime(project_end, "%Y-%m-%d").date()
+else:
+    project_start = today
+    project_end = today + datetime.timedelta(days=30)
 
 # 기간 계산 (방어 코드 포함 - Early Return 개념 적용)
 total_days = max(1, (project_end - project_start).days + 1)
@@ -676,7 +739,7 @@ with tab_members:
 with tab_crud:
     st.subheader("⚙️ 작업 등록 / 수정 / 삭제 관리 패널")
     
-    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)"], horizontal=True)
+    crud_mode = st.radio("수행할 작업을 선택하세요", ["작업 추가 (+)", "작업 수정 (✏️)", "작업 삭제 (🗑️)", "스프린트 추가 (📅)", "프로젝트 추가 (📂)"], horizontal=True)
     st.markdown("---")
     
     # DB 최신 옵션 목록
@@ -881,8 +944,14 @@ with tab_crud:
     elif crud_mode == "스프린트 추가 (📅)":
         st.markdown("#### 📅 새로운 애자일 스프린트 등록")
         
+        # 프로젝트 선택 옵션 가공
+        proj_opts = {row['name']: row['id'] for idx, row in projects_df.iterrows()} if not projects_df.empty else {}
+        
         with st.form("add_sprint_form"):
             c_sprint_name = st.text_input("스프린트명 (필수, 예: 스프린트 8: 배포 및 운영)")
+            
+            # 프로젝트 지정 셀렉트 박스
+            c_sprint_proj_name = st.selectbox("소속 프로젝트 선택", list(proj_opts.keys())) if proj_opts else st.selectbox("소속 프로젝트 선택", ["등록된 프로젝트 없음"])
             
             col_sa, col_sb = st.columns(2)
             with col_sa:
@@ -898,23 +967,63 @@ with tab_crud:
                 # 입구에서 검사 (Early Return) - 필수 값 확인
                 if not c_sprint_name.strip():
                     st.error("오류: 스프린트명을 입력해 주세요.")
+                elif not proj_opts:
+                    st.error("오류: 스프린트를 등록하기 전에 프로젝트를 먼저 생성하셔야 합니다.")
                 elif c_sprint_start > c_sprint_end:
                     st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
                 else:
+                    target_project_id = int(proj_opts[c_sprint_proj_name])
+                    
                     # 만약 현재 활성 스프린트로 지정한다면 기존의 모든 활성 표기를 FALSE 처리
                     if c_sprint_active:
                         # [확인용 출력] 기존 활성 스프린트 비활성화 처리 로그
                         print("[스프린트 추가] 새 활성 스프린트 등록으로 인해 기존 활성 스프린트들을 비활성화 처리합니다.")
-                        db_execute("UPDATE pms_sprints SET is_active = FALSE;")
+                        db_execute("UPDATE pms_sprints SET is_active = FALSE WHERE project_id = %s;", (target_project_id,))
                     
                     # [확인용 출력] 신규 스프린트 등록 쿼리 실행 로그
-                    print(f"[스프린트 추가] 신규 스프린트 '{c_sprint_name}' ({c_sprint_start} ~ {c_sprint_end}) 등록을 시도합니다.")
+                    print(f"[스프린트 추가] 신규 스프린트 '{c_sprint_name}' (프로젝트 ID: {target_project_id}) 등록을 시도합니다.")
                     
                     success = db_execute("""
-                        INSERT INTO pms_sprints (name, start_date, end_date, is_active)
-                        VALUES (%s, %s, %s, %s);
-                    """, (c_sprint_name, c_sprint_start, c_sprint_end, c_sprint_active))
+                        INSERT INTO pms_sprints (name, start_date, end_date, is_active, project_id)
+                        VALUES (%s, %s, %s, %s, %s);
+                    """, (c_sprint_name, c_sprint_start, c_sprint_end, c_sprint_active, target_project_id))
                     
                     if success:
                         st.success(f"새 스프린트 '{c_sprint_name}'이 성공적으로 추가되었습니다!")
+                        st.rerun()
+
+    # 4.5 프로젝트 추가 폼
+    elif crud_mode == "프로젝트 추가 (📂)":
+        st.markdown("#### 📂 새로운 대형 프로젝트 등록")
+        
+        with st.form("add_project_form"):
+            c_proj_name = st.text_input("프로젝트명 (필수)")
+            c_proj_client = st.text_input("발주처 (예: 네이버, 삼성 등)")
+            c_proj_desc = st.text_area("프로젝트 상세 설명")
+            
+            col_pa, col_pb = st.columns(2)
+            with col_pa:
+                c_proj_start = st.date_input("프로젝트 시작일", datetime.date.today())
+            with col_pb:
+                c_proj_end = st.date_input("프로젝트 종료일", datetime.date.today() + datetime.timedelta(days=60))
+                
+            project_submit_btn = st.form_submit_button("프로젝트 등록하기 🚀")
+            
+            if project_submit_btn:
+                # 입구에서 검사 (Early Return)
+                if not c_proj_name.strip():
+                    st.error("오류: 프로젝트명을 입력해 주세요.")
+                elif c_proj_start > c_proj_end:
+                    st.error("오류: 시작일은 종료일보다 이전 날짜여야 합니다.")
+                else:
+                    # [확인용 출력] 새 프로젝트 등록 로그
+                    print(f"[프로젝트 추가] 신규 프로젝트 '{c_proj_name}' (발주처: {c_proj_client}) 등록을 시도합니다.")
+                    
+                    success = db_execute("""
+                        INSERT INTO pms_projects (name, start_date, end_date, client, description)
+                        VALUES (%s, %s, %s, %s, %s);
+                    """, (c_proj_name, c_proj_start, c_proj_end, c_proj_client, c_proj_desc))
+                    
+                    if success:
+                        st.success(f"새 프로젝트 '{c_proj_name}'이 성공적으로 등록되었습니다!")
                         st.rerun()
